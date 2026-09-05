@@ -87,7 +87,15 @@
   }[CLIENT] || { scriptingModel: "a JavaScript macro API", hasAgentsToday: false };
 
   // External links (kept generic; brand Discord, not ModernUO's).
-  var LINK_BUG = "https://discord.gg/zhaa5TsTYC";
+  // 🚨 NO COMMUNITY LINK IS BAKED IN HERE. This used to be a real Discord invite written out
+  // in full, which means every self-hoster shipped a "Report a bug" button that sent THEIR
+  // players to somebody else's community. The published repository already states the rule --
+  // "a published repo must not carry one community's link" -- and index.html was scrubbed for
+  // exactly this; the rail was missed, so the rule held in one file and not in the other.
+  //
+  // It comes from /api/config now, like the landing icon does. Unset means the button is never
+  // added: an affordance that goes nowhere is worse than no affordance.
+  var LINK_BUG = "";
 
   /* ── icons (24x24, stroke=currentColor) ──────────────────────────────── */
   var I = {
@@ -258,11 +266,32 @@
     // cannot reach from a page you are not currently looking at.
 
     // Bug report — official renders a TEXT link "🐛 Bug Report" in gold, not an icon.
-    var bug = el("button", {
-      "class": "uorail-textlink uorail-textlink-gold", "data-pointer": "auto", "aria-label": "Report a bug", type: "button",
-    }, "🐛 Bug Report");
-    bug.addEventListener("click", function () { openExternal(LINK_BUG); });
-    bar.appendChild(bug);
+    //
+    // Appended only once an invite has been resolved, rather than created hidden and revealed: a
+    // control shown by clearing style.display does not appear at all when the stylesheet says none,
+    // which this project has already paid for once. Appending later still lands it last in the bar,
+    // which is where it belongs.
+    (function wireBugLink() {
+      fetch("/api/config", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (cfg) {
+          var invite = String((cfg && cfg.discordInvite) || "").trim();
+          if (!invite) return;
+          // http(s) only. The value is this install's own configuration, but the check costs nothing
+          // and keeps a mistyped javascript: out of something the client will open.
+          try {
+            var u = new URL(invite);
+            if (u.protocol !== "https:" && u.protocol !== "http:") return;
+          } catch (e) { return; }
+          LINK_BUG = invite;
+          var bug = el("button", {
+            "class": "uorail-textlink uorail-textlink-gold", "data-pointer": "auto", "aria-label": "Report a bug", type: "button",
+          }, "🐛 Bug Report");
+          bug.addEventListener("click", function () { openExternal(LINK_BUG); });
+          bar.appendChild(bug);
+        })
+        .catch(function () { /* offline: no button, which is the honest state */ });
+    }());
 
     root.appendChild(bar);
 

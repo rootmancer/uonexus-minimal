@@ -490,7 +490,7 @@ back, while the rest of the world looks perfect. Guards were added and it still 
 v1.0.50 you decide: the admin panel's *Chunk snapshot cache* card turns it on and you get the frames
 and the risk, or you leave it off and get a correct picture at the slower speed. The whole story,
 with a picture of what it looks like, is under
-[Missing static art](#missing-static-art--classicuo-only-still-open).
+[Missing static art](#missing-static-art--classicuo-and-only-with-the-chunk-cache-switched-on).
 
 > **If scenery ever goes missing, reload with `?snapshot=off`.** If it comes back, the cache is at
 > fault, not your files. If it does not come back, go and look at your `.mul` set.
@@ -637,7 +637,7 @@ setting — they last for that page load and no longer.
 
 | Parameter | What it does |
 |---|---|
-| `?snapshot=off` | Turns off the **chunk cache**, the client's copy of map areas it has already drawn. **The first thing to ask for when part of the world stops rendering**: if the artwork comes back, it is that cache and not your fileset — see [Missing static art](#missing-static-art--classicuo-only-still-open). Costs frames. (`?snapshot=0` and `?snapshot=none` are the same.) The cache is **off by default**, so this only changes anything on an install that turned it on in the admin panel. ⚠️ **ClassicUO only.** TazUO has no chunk cache, so on `/tuo/` this parameter changes nothing and missing scenery there has some other cause — see [Which one should you serve?](#which-one-should-you-serve). |
+| `?snapshot=off` | Turns off the **chunk cache**, the client's copy of map areas it has already drawn. **The first thing to ask for when part of the world stops rendering**: if the artwork comes back, it is that cache and not your fileset — see [Missing static art](#missing-static-art--classicuo-and-only-with-the-chunk-cache-switched-on). Costs frames. (`?snapshot=0` and `?snapshot=none` are the same.) The cache is **off by default**, so this only changes anything on an install that turned it on in the admin panel. ⚠️ **ClassicUO only.** TazUO has no chunk cache, so on `/tuo/` this parameter changes nothing and missing scenery there has some other cause — see [Which one should you serve?](#which-one-should-you-serve). |
 | `?snapshot=full` | The other direction: runs the chunk cache for this one load even though the install has it off. Use it to measure what the cache is worth on the machine in front of you before deciding to enable it for everyone. (`?snapshot=on` and `?snapshot=1` are the same.) |
 | `?snapshot=mem` | Middle setting: the cache works, but only in memory — nothing is written to browser storage. Useful for telling "the cache is wrong" apart from "what was SAVED is wrong". |
 | `?dev=1` | Turns the browser console back on. It is silenced by default, so without this a player's console shows almost nothing and a bug report has no log. `?dev=2` is louder still. ⚠️ Has no effect if you switched the developer console off in the admin panel — that gate wins on purpose. |
@@ -674,7 +674,7 @@ what it deliberately does not touch.*
 
 From the panel you can see what the install resolved, choose whether a bare visit to `/` lands on
 ClassicUO or TazUO, decide whether ClassicUO runs its
-[chunk snapshot cache](#missing-static-art--classicuo-only-still-open) — a large speed-up
+[chunk snapshot cache](#missing-static-art--classicuo-and-only-with-the-chunk-cache-switched-on) — a large speed-up
 that carries an open defect, so it ships off — turn the client's developer console back on
 while debugging, watch disk usage
 and live sessions, ban a Discord id or an address, set which scripting verbs are allowed, download a
@@ -705,62 +705,6 @@ plain `cp -r` of the bundle is how it gets reverted to the placeholder.
 Players do not re-download the game files. A client update does not touch them, and the cache audit
 that runs after boot compares each cached file against the published hash map and fetches only what
 no longer matches — so replacing a fileset costs your players exactly the files you replaced.
-
----
-
-## Known issues
-
-Two client bugs are open at the time of writing. Both are in the client itself rather than in this
-stack, and both are stated here rather than left for you to discover — with the note that the first
-one only applies to the ClassicUO build.
-
-### Missing static art — ClassicUO only, still open
-
-**Parts of the world stop rendering.** Walls, floors and other static art vanish from an area while
-everything else draws normally, so you end up looking at furniture standing in mid-air and a house
-you can see straight through:
-
-![Static art missing from an area in ClassicUO](docs/screenshots/ghost-statics-cuo.webp)
-
-*ClassicUO, seen from the street. Half the roof is missing, so the floorboards, chairs and lamps
-inside are drawn in the open air. The fileset is fine: the same spot draws correctly with the cache
-off, which is what identifies this rather than your `.mul` set.*
-
-**Why it happens.** ClassicUO caches decoded map chunks in browser storage so that walking back
-into an area does not mean reading the game files again. A chunk can be captured while part of its
-contents has already been freed; that partial copy passes every later check, gets stored, and is
-handed back on the next visit. From then on the area is missing whatever was already gone at the
-moment of capture.
-
-**Where it stands.** Two rounds of fixes closed four ways in — the last one, in v1.0.17, added a
-guard that refuses a capture holding fewer statics than the read inserted, and bumped the cache
-schema so existing copies are discarded. **It still happens.** So as of v1.0.50 the cache ships
-**off by default**, and whether to run it is now yours to decide from the admin panel.
-
-**The trade you are being offered.** The cache is a *large* win: an A/B on the same build measured
-up to **30 more frames per second** with it on, plus visibly fewer stutters when crossing into new
-areas. Turning it on buys that and accepts this defect. Turning it off — the default — costs those
-frames and draws the world correctly every time. Neither answer is wrong; it depends on what your
-players run.
-
-Both switches exist:
-
-- **Per install**, in the admin panel: *Chunk snapshot cache* → **Off** / **On**. Applies on each
-  player's next page load.
-- **Per player, for one load**, with [`?snapshot=off`](#url-parameters) — and `?snapshot=full` to
-  force it on the other way. This is also the **diagnostic**: if the missing artwork comes back with
-  `?snapshot=off`, it is this and not your fileset, and that report is useful.
-
-⚠️ **None of this reaches a TazUO-only install.** The cache is ClassicUO's and was deliberately not
-ported — see [Which one should you serve?](#which-one-should-you-serve). Missing scenery on `/tuo/`
-is a different problem, the switch does nothing there, and `?snapshot=off` will not move it.
-
-### The tab occasionally freezes while typing at the login screen
-
-Rare, not reproduced in ~690 automated attempts across two harnesses, and still open. The client
-keeps a black box that survives the freeze: after it happens, reopen the site and a notice appears
-with a **Copy report** button. Sending that report is the only way this gets fixed — it cannot be
-reproduced on demand.
 
 ---
 
@@ -823,6 +767,69 @@ achievements, no analytics. Those exist in the hosted deployment this was carved
 [minimal.uonexus.com](https://minimal.uonexus.com) running this repository — and none of
 that code is here — the published file list is derived from the import graph of the entrypoint, so
 it cannot arrive by accident.
+
+---
+
+## Known issues
+
+Two client bugs are open at the time of writing. Both are in the client itself rather than in this
+stack, and both are stated here rather than left for you to discover.
+
+⚠️ **You should not meet the first one on a default install.** It only happens when ClassicUO's
+chunk cache is switched **on**, and that cache ships **off** precisely because of it. If you never
+touch the setting, this section is background reading.
+
+### Missing static art — ClassicUO, and only with the chunk cache switched ON
+
+**This needs the chunk cache turned ON.** With the shipped default — off — the client reads every
+area from your game files each time and the defect cannot occur. What follows describes what you are
+trading away if you turn it on, and how to recognise it if you do.
+
+**Parts of the world stop rendering.** Walls, floors and other static art vanish from an area while
+everything else draws normally, so you end up looking at furniture standing in mid-air and a house
+you can see straight through:
+
+![Static art missing from an area in ClassicUO](docs/screenshots/ghost-statics-cuo.webp)
+
+*ClassicUO, seen from the street. Half the roof is missing, so the floorboards, chairs and lamps
+inside are drawn in the open air. The fileset is fine: the same spot draws correctly with the cache
+off, which is what identifies this rather than your `.mul` set.*
+
+**Why it happens.** ClassicUO caches decoded map chunks in browser storage so that walking back
+into an area does not mean reading the game files again. A chunk can be captured while part of its
+contents has already been freed; that partial copy passes every later check, gets stored, and is
+handed back on the next visit. From then on the area is missing whatever was already gone at the
+moment of capture.
+
+**Where it stands.** Two rounds of fixes closed four ways in — the last one, in v1.0.17, added a
+guard that refuses a capture holding fewer statics than the read inserted, and bumped the cache
+schema so existing copies are discarded. **It still happens.** So as of v1.0.50 the cache ships
+**off by default**, and whether to run it is now yours to decide from the admin panel.
+
+**The trade you are being offered.** The cache is a *large* win: an A/B on the same build measured
+up to **30 more frames per second** with it on, plus visibly fewer stutters when crossing into new
+areas. Turning it on buys that and accepts this defect. Turning it off — the default — costs those
+frames and draws the world correctly every time. Neither answer is wrong; it depends on what your
+players run.
+
+Both switches exist:
+
+- **Per install**, in the admin panel: *Chunk snapshot cache* → **Off** / **On**. Applies on each
+  player's next page load.
+- **Per player, for one load**, with [`?snapshot=off`](#url-parameters) — and `?snapshot=full` to
+  force it on the other way. This is also the **diagnostic**: if the missing artwork comes back with
+  `?snapshot=off`, it is this and not your fileset, and that report is useful.
+
+⚠️ **None of this reaches a TazUO-only install.** The cache is ClassicUO's and was deliberately not
+ported — see [Which one should you serve?](#which-one-should-you-serve). Missing scenery on `/tuo/`
+is a different problem, the switch does nothing there, and `?snapshot=off` will not move it.
+
+### The tab occasionally freezes while typing at the login screen
+
+Rare, not reproduced in ~690 automated attempts across two harnesses, and still open. The client
+keeps a black box that survives the freeze: after it happens, reopen the site and a notice appears
+with a **Copy report** button. Sending that report is the only way this gets fixed — it cannot be
+reproduced on demand.
 
 ---
 
