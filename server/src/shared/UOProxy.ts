@@ -163,7 +163,7 @@ function resolveMinigameFromReq(req: http.IncomingMessage): string | null {
 // If the log on the NAS shows an older tag, the docker image cache lied.
 // Force a clean rebuild with:
 //   docker compose build proxy --no-cache && docker compose up -d --force-recreate proxy
-export const PROXY_BUILD_TAG = '2026-09-05T-v1.0.39-snapoff (the chunk snapshot cache now ships OFF and is toggled from /admin: the ghost-statics defect survived the v1.0.17 capture guard, so an install that has not chosen runs correct and slower instead of fast and sometimes missing its scenery. Up to 30 fps are on the table and the operator decides. Also: the announcements panel serves the last ten Discord messages instead of one, asking for a wider upstream window so unrenderable posts cannot shrink the feed)';
+export const PROXY_BUILD_TAG = '2026-09-06T-v1.0.41-inputgate (the client no longer opens its keyboard while the page is hidden. Switching away during boot and coming back could leave you typing into a client that was still busy, and the tab wedged — the freeze players reported at the login gump. The gate used to arm the moment nobody was looking, which hands the protection away exactly when someone returns; it now waits for a page somebody is watching and re-proves the main thread is keeping up before accepting input. Also: the minigame menus can no longer sit on Loading for ever if a request never answers, and a failed admin-config fetch is retried instead of being remembered as the answer for the whole session)';
 
 // When ModernUO finishes the auth phase it sends 0x8C and immediately FINs
 // the TCP. The proxy used to react by closing the WS with code 1000 right

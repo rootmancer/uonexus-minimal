@@ -4359,33 +4359,51 @@ function installInputBridge(canvas, Module) {
   // one act (see the 15 s net just before runMain). If we have given up waiting
   // and are showing the client anyway, it must also be typeable — a revealed
   // client that ignores the keyboard is worse than either state alone.
-  globalThis.__uoArmInput = _armInput;
+  // 🚨 It is the VISIBILITY-AWARE entry point, not the raw arm. That net is a wall-clock timer like
+  // the other two, so on a backgrounded boot it opened the gate for a player who was not there —
+  // the same defect as the branch removed below, just with a different label in the black box. On a
+  // visible page it is unchanged.
+  globalThis.__uoArmInput = _armWhenVisible;
 
   // These three all mean the loop is alive and past login; arm immediately.
   window.addEventListener('cuo:gamescene-active', () => _armInput('gamescene'));
   window.addEventListener('cuo:draw-heartbeat',  () => _armInput('draw-heartbeat'));
   window.addEventListener('cuo:player-created',   () => _armInput('player-created'));
 
-  // 🚨 A PAGE THE BROWSER IS NOT PAINTING CANNOT BE RECEIVING TYPED INPUT FROM A HUMAN.
-  // Chrome stops animation frames for a hidden tab and throttles an occluded window, so the
-  // quiescence watch cannot converge there — and because the loader now follows the input gate,
-  // that shows up as the login screen sitting on "Almost ready" until the fallback expires. There
-  // is no typist to protect in that state, so arm instead of waiting for frames that never come.
-  // This cannot weaken the gate: the burst of keystrokes it exists to survive requires a visible,
-  // focused window.
-  const _armIfNotVisible = () => {
-    try {
-      if (document.visibilityState !== 'visible') _armInput('page-not-visible');
-    } catch { /* a diagnostic must never be the reason input stays gated */ }
-  };
+  // 🚨 THE GATE MUST NOT OPEN WHILE THE PAGE IS HIDDEN. THIS IS THE HANG, MEASURED.
+  //
+  // What stood here armed the gate the moment the page was not visible, reasoning — correctly —
+  // that "a page the browser is not painting cannot be receiving typed input from a human, so there
+  // is no typist to protect", and concluding "this cannot weaken the gate". It does weaken it, and
+  // the black box caught it on 2026-09-05 after ~690 automated attempts had reproduced nothing:
+  //
+  //   T+14665  visibility=hidden                    the operator switches away mid-boot
+  //   T+15893  main-thread stalled ~893ms
+  //   T+23323  input-gate ARMED: page-not-visible   the login gump arrives while hidden
+  //   T+23544  visibility=visible                   they come back, 221 ms later
+  //   T+23627  long-frame=22ms  ->  silence         still reserving 4096x4096 atlases
+  //
+  // The reasoning is about the WRONG INSTANT. Arming is permanent, so a decision taken while nobody
+  // could type hands the protection away exactly when a human returns to a client that never
+  // demonstrated quiescence. `engineLastBeat=0` and 1482/1487 MB of a 4192 MB heap: the engine was
+  // alive and it was not out of memory — it was busy, and the gate was already open.
+  //
+  // The fix is not to delete that branch. Deleting it alone only relabels the arm: the fallback
+  // below runs on WALL CLOCK, so it expires while hidden and opens the gate as 'post-gump-fallback'
+  // with the thread in the same state. The rule that closes the class is: **the budget is spent on
+  // a page somebody is looking at.** Frames are the evidence of quiescence, a hidden page delivers
+  // none, so a hidden page simply waits — and when it comes back, the watch starts over with a
+  // fresh budget. Nobody is staring at "Almost ready" in the meantime, because nobody is looking.
+  //
+  // On a page that is never hidden this is byte-for-byte the previous behaviour: `_armWhenVisible`
+  // arms immediately and the watch runs once. That matters — this must not slow a healthy boot.
+  let _quietWatch = 0;      // rAF handle, so a restart can never leave two watches racing
+  let _fallbackTimer = 0;
 
-  // The login gump starts the quiescence watch instead of arming.
-  window.addEventListener('cuo:login-gump-added', () => {
+  const _startQuietWatch = () => {
     if (_inputReady) return;
-    _armIfNotVisible();
-    if (_inputReady) return;
-    // Backgrounded WHILE waiting counts too: the watch stalls the moment frames stop.
-    document.addEventListener('visibilitychange', _armIfNotVisible);
+    try { cancelAnimationFrame(_quietWatch); } catch { /* pre-restart handle may be stale */ }
+    clearTimeout(_fallbackTimer);
     let quiet = 0;
     let last = performance.now();
     const tick = () => {
@@ -4393,24 +4411,57 @@ function installInputBridge(canvas, Module) {
       const now = performance.now();
       const gap = now - last;
       last = now;
+      // A resumed tab reports one enormous gap first, which resets the count — correct, and the
+      // reason this needs no special case: the frames either arrive on time or they do not.
       quiet = (gap <= QUIET_GAP_MS) ? quiet + 1 : 0;
       if (quiet >= QUIET_FRAMES) {
         _armInput(`main-thread-quiet(${QUIET_FRAMES}f<=${QUIET_GAP_MS}ms)`);
         return;
       }
-      requestAnimationFrame(tick);
+      _quietWatch = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
-    // Bounded net for this phase: a machine that never settles must still be
-    // playable. Without it, a permanently busy main thread would be
-    // indistinguishable from a broken client for the full 180 s below.
-    setTimeout(() => _armInput('post-gump-fallback'), POST_GUMP_FALLBACK_MS);
+    _quietWatch = requestAnimationFrame(tick);
+    // Bounded net for this phase: a machine that never settles must still be playable. Without it,
+    // a permanently busy main thread would be indistinguishable from a broken client for the full
+    // 180 s below. It defers rather than arms when hidden — that deferral IS the fix.
+    _fallbackTimer = setTimeout(() => _armWhenVisible('post-gump-fallback'), POST_GUMP_FALLBACK_MS);
+  };
+
+  // Arm now if someone is looking; otherwise wait for them and then prove quiescence first.
+  // Re-arming the watch rather than arming outright on the visible transition is deliberate: the
+  // moment a player returns is precisely when the client is least likely to have settled.
+  function _armWhenVisible(why) {
+    if (_inputReady) return;
+    let visible = true;
+    try { visible = (document.visibilityState === 'visible'); } catch { /* no API — treat as visible */ }
+    if (visible) { _armInput(why); return; }
+    const onVisible = () => {
+      try { if (document.visibilityState !== 'visible') return; } catch { /* fall through and arm */ }
+      document.removeEventListener('visibilitychange', onVisible);
+      if (_inputReady) return;
+      _startQuietWatch();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+  }
+
+  // The login gump starts the quiescence watch instead of arming.
+  window.addEventListener('cuo:login-gump-added', () => {
+    if (_inputReady) return;
+    // Coming BACK counts as much as going away: the watch stalls the moment frames stop, so the
+    // budget it had spent while hidden was spent on nothing. Start it over.
+    document.addEventListener('visibilitychange', () => {
+      try { if (document.visibilityState !== 'visible') return; } catch { /* */ }
+      if (!_inputReady) _startQuietWatch();
+    });
+    _startQuietWatch();
   }, { once: true });
 
   // Absolute safety net: never leave input disabled forever if no signal
   // arrives (e.g. a render-path regression that never paints). 180 s is far
   // past the worst observed cold boot (~110 s) so it can't pre-arm mid-boot.
-  setTimeout(() => _armInput('safety-timeout-180s'), 180_000);
+  // Same rule as the fallback: on a hidden page it waits, because opening the gate for a player who
+  // is not there only means the gate is already open when they arrive.
+  setTimeout(() => _armWhenVisible('safety-timeout-180s'), 180_000);
 
   // direction. Reasons:
   //   1. It locks the OS cursor inside the canvas — user wants the
