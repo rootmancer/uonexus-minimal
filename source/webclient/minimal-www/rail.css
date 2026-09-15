@@ -164,7 +164,12 @@
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 7px);
   transform: translateX(-50%);
-  white-space: nowrap;
+  /* WRAPS instead of nowrap (2026-09-06). The rail's own labels are two or three words, so
+     width:max-content keeps every one of them on a single line exactly as before — the change is
+     invisible there. What it makes possible is the long ones: converting the loader's native
+     `title` tooltips brought in sentences of ~100 characters, and with nowrap those run off the
+     side of the screen, losing the end of the sentence — the half that explains the consequence. */
+  white-space: normal; width: max-content; max-width: 260px; text-align: left;
   padding: 4px 9px;
   font-size: 12px; font-family: var(--rail-sans);
   color: var(--rail-ink);
@@ -176,6 +181,10 @@
   transition: opacity 110ms ease-out;
   z-index: 5;
 }
+/* An empty label paints an empty box. The guard lives here, not at each call site: a caller
+   that computes its tip (shop.html: "" when there is nothing to say) is normal, and a rule
+   is the only place that covers the callers nobody has written yet. */
+[data-tip=""]::after { content: none; }
 [data-tip]:hover::after { opacity: 1; }
 
 /* tooltip (left of the bar) — PLACEMENT ONLY.

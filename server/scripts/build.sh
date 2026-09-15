@@ -322,6 +322,12 @@ node "$(dirname "$0")/fingerprint-rail-css.mjs" --in "$CLIENT"
 
 # v0.7.9: verify-sri KEPT even in dev-fast — 2s safety net for the
 # incremental-build risk where the .wasm and its .br twin can desync.
+# 2026-09-14: framework files named by their FINAL bytes before anything verifies or deploys this
+# bundle. The SDK names them from the SOURCE, and a bundle deployed with those names can change
+# bytes under a URL served `immutable` - a returning browser then refuses the loader and never
+# boots (the year-long black screen of 2026-09-02). See framework-names.mjs.
+echo "[build] Naming _framework files by their content hash..."
+node "$(dirname "$0")/framework-names.mjs" "$CLIENT" || { echo "[build] framework-names failed -- build aborted."; exit 1; }
 echo "[build] Verifying SRI integrity manifest..."
 node "$(dirname "$0")/verify-sri.mjs" --root "$CLIENT"
 

@@ -107,6 +107,18 @@ namespace ClassicUO.Game.Map
         // to pool. The mesh-dirty path naturally rebuilds because the
         // replay gate also requires `!mesh.IsDirty`.
         public bool CachedContribsValid;
+        // 2026-09-15 (ported from the mini): the view the cache was CLIPPED under - draw offset and pixel
+        // box of the fill that built it. A replay is only complete while today's visible area still sits
+        // inside that box (see GameScene.ReplayClipCovers). Written when CachedContribsValid goes true.
+        public int CachedClipOffX, CachedClipOffY;
+        public float CachedClipMinX, CachedClipMinY, CachedClipMaxX, CachedClipMaxY, CachedClipZoom;
+        // The draw offset EVERY object of this chunk had its screen position computed at, or int.MinValue
+        // when that is not known. Positions go stale behind UpdateDrawPosition's back: a replay refreshes
+        // only the cached objects, a walk stops a cell's chain at the first object outside the clip, and a
+        // chunk the fill never visits keeps whatever offset it last saw - while UpdateDrawPosition is
+        // cleared at the end of every fill. A full walk refreshes whole chains whenever this differs from
+        // the current offset (AddTileToRenderList) and then stamps it.
+        public int RspOffX = int.MinValue, RspOffY = int.MinValue;
         public readonly List<GameObject> CachedMeshContribs = new List<GameObject>();
         public readonly List<GameObject> CachedSlowPathContribs = new List<GameObject>();
         public readonly List<bool> CachedSlowPathTransparent = new List<bool>();
@@ -334,6 +346,7 @@ namespace ClassicUO.Game.Map
             // invalidated separately. Next fill takes the full-iteration
             // path which clears + rebuilds the cache.
             CachedContribsValid = false;
+            RspOffX = RspOffY = int.MinValue; // the arrival's screen position is not known to match
 #endif
             obj.RemoveFromTile();
 
@@ -632,6 +645,7 @@ namespace ClassicUO.Game.Map
             // is destroyed. Stale entries would resurrect freed items if
             // the chunk slot is later reused for a different (X,Y) tile.
             CachedContribsValid = false;
+            RspOffX = RspOffY = int.MinValue;
             CachedMeshContribs.Clear();
             CachedSlowPathContribs.Clear();
             CachedSlowPathTransparent.Clear();

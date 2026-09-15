@@ -28,7 +28,7 @@ import path from 'node:path';
 import { createBrotliCompress, constants } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
-import { bakeMap } from './bake-worldmap.mjs';
+import { bakeMap, pruneOtherGenerations } from './bake-worldmap.mjs';
 
 const ROOT = process.env.GAMEFILES_ROOT || '/gamefiles-root';
 const SLUG = process.env.SHARD_SLUG || '';
@@ -128,6 +128,27 @@ async function mapPass(dir) {
       // this log claim six bakes on every idle pass, which is worse than no log at all.
       const r = await bakeMap(i, dir, out, false);
       if (r && !r.skipped) baked++;
+      // 🚨 DROP THIS FACET'S EARLIER GENERATIONS — and only when the facet RESOLVED.
+      //
+      // The PNG name encodes the map+static byte sizes, so replacing a fileset produces a new name
+      // and leaves the old file behind, unreachable, forever. Measured on dev-minimal 2026-09-06:
+      // 64 MB of MapsCache with map0 and map1 each carrying two generations — ~29 MB, 44 %, that
+      // nothing can ever serve. It grows once per fileset change and never shrinks, on the
+      // self-hoster's disk.
+      //
+      // Safe HERE and nowhere else: gamefilesDir() resolves exactly ONE directory, so this cache
+      // belongs to one fileset. The same prune inside bakeMap would also hit the POOL cache, which
+      // is shared across hosted shards — there another generation is usually another shard's
+      // fileset, live (measured: 27 PNGs, 5 manifests). That is why the helper is exported and
+      // called from here rather than wired into the bake.
+      //
+      // `r.outPath` is present both when the PNG was just written and when it was already current;
+      // a facet the fileset does not carry returns neither, and then nothing is swept for it — a
+      // transient read failure must not cost the player a cache.
+      if (r && r.outPath) {
+        const gone = pruneOtherGenerations(out, i, path.basename(r.outPath));
+        if (gone.length) log(`map${i}: dropped ${gone.length} stale PNG(s): ${gone.join(', ')}`);
+      }
     } catch (e) { /* a fileset legitimately may not carry every facet */ }
   }
   return baked;

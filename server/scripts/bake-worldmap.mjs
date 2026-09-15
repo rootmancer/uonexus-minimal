@@ -431,6 +431,50 @@ export function bakeMap(mapIndex, gamefilesDir, outDir, force) {
   });
 }
 
+/**
+ * Remove the PNGs a facet baked for a PREVIOUS fileset, in a SINGLE-INSTALL cache.
+ *
+ * 🚨 EXPORTED BUT DELIBERATELY NOT CALLED BY `bakeMap`, and that restraint is the whole design.
+ * `bakeMap` also bakes the POOL cache, which is shared by every hosted shard: there, another
+ * generation of the same facet is usually ANOTHER SHARD'S FILESET, live. Measured on production
+ * 2026-09-06: map0 with four generations and map1 with five, 27 PNGs against 5 manifests (30 the
+ * maximum possible) — tenants, not residue. A prune inside `bakeMap` would have deleted other
+ * shards' worldmaps, and I had it written, with a green gate and four caught mutations, before the
+ * measurement stopped it. A green gate proves the prune does what it says, not that saying it is
+ * correct.
+ *
+ * The minimal's worker is the caller that CAN use this: `gamefilesDir()` resolves exactly one
+ * directory, so that MapsCache belongs to one fileset and nobody else can be holding its old
+ * generations. Measured there: 64 MB, of which ~29 (44 %) unreachable.
+ *
+ * ⚠️ The matcher takes no escapes on purpose. The first version was
+ * `new RegExp(\`^map${mapIndex}_sz_\d+_\d+\.png$\`)`, and inside a template literal `\d` is
+ * just `d`, so the live pattern was `^map0_sz_d+_d+.png$` and matched NOTHING — it deleted nothing
+ * and read exactly like a clean directory. Caught by running it, not by reading it.
+ *
+ * Returns the names removed, so the caller can say what happened instead of doing it silently.
+ */
+export function pruneOtherGenerations(outDir, mapIndex, keepName) {
+  const prefix = `map${mapIndex}_sz_`;
+  const DIGITS = /^[0-9]+$/;
+  const isSameFacet = (name) => {
+    if (!name.startsWith(prefix) || !name.endsWith('.png')) return false;
+    const parts = name.slice(prefix.length, -'.png'.length).split('_');
+    return parts.length === 2 && parts.every((p) => DIGITS.test(p));
+  };
+  const removed = [];
+  let names;
+  try { names = readdirSync(outDir); } catch { return removed; }
+  for (const name of names) {
+    if (name === keepName || !isSameFacet(name)) continue;
+    try {
+      unlinkSync(path.join(outDir, name));
+      removed.push(name);
+    } catch { /* a cache we cannot tidy is not a reason to fail anything */ }
+  }
+  return removed;
+}
+
 // ── Discovery for --all mode ──────────────────────────────────────────────────
 function discoverMaps(gamefilesDir) {
   const found = [];

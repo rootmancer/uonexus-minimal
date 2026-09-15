@@ -39,6 +39,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { mayReplaceVersion } from './_versionRank.mjs';
+import { applyContentNames } from './framework-names.mjs';
 import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -885,7 +886,23 @@ for (const bundle of (WEB_TREE_ONLY ? [] : BUNDLES)) {
   // operator while fresh contexts saw them). Re-fingerprint from content exactly like main/rail so any
   // change gets a NEW name + index refs + SRI, and old browsers pick it up via the no-cache index.html.
   if (bundle === 'mini') {
+    // 🚨 ASSEMBLE FIRST. The runtime's source is `mini-overrides/src/**`; the single file below is
+    // an artifact. Building from a stale artifact would ship yesterday's parts while every gate
+    // reads the same stale bytes and agrees with itself — the exact shape of "a bundle that is not
+    // rebuilt is invisible", which this project has already paid for once.
+    //
+    // It ASSEMBLES rather than merely checking, so a forgotten command can never produce a wrong
+    // build; the committed artifact drifting from the parts is caught separately, at test time, by
+    // `MiniRuntimeIsAssembledFromParts`. A build that fails over something forgettable gets worked
+    // around; a build that is simply correct does not.
     const mrSrc = path.join(REPO, 'source', 'webclient', 'mini-overrides', 'mini-runtime.js');
+    try {
+      execFileSync(process.execPath,
+        [path.join(REPO, 'server', 'scripts', 'assemble-mini-runtime.mjs')],
+        { stdio: 'inherit' });
+    } catch {
+      throw new Error('[build-web] mini-runtime could not be assembled from mini-overrides/src/ — see above');
+    }
     if (fs.existsSync(mrSrc) && refingerprintJs(clientDir, 'mini-runtime', fs.readFileSync(mrSrc))) total++;
   }
   total += copyStatic(clientDir);
@@ -1021,6 +1038,11 @@ buildWebTree();
 
 // 5. Hard guardrail: SRI must verify for every bundle, or we DON'T ship.
 for (const bundle of (WEB_TREE_ONLY ? [] : BUNDLES)) {
+  // Framework files named by their bytes before anything is verified or deployed. A cold build.bat
+  // hands this the SDK's source-hash names, and a bundle deployed with those can change bytes under a
+  // URL served `immutable` — the year-long black screen of 2026-09-02. Idempotent on a bundle already
+  // named this way. See framework-names.mjs.
+  applyContentNames(path.join(REPO, 'client', bundle), { log });
   log(`verify-sri client/${bundle} ...`);
   run(process.execPath, [path.join(__dirname, 'verify-sri.mjs'), '--root', path.join(REPO, 'client', bundle)]);
   // build-id.txt cache-buster: build-web is BOTH the mini's full-build finisher

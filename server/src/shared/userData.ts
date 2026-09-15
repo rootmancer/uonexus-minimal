@@ -59,10 +59,32 @@ const SINGLE_TABLES = [
 //
 // The list is hand-maintained and will keep growing; preparing lazily means the next name added
 // to it can be wrong without taking the site down with it.
-let _single: import('node:sqlite').StatementSync[] | null = null;
-function singleStatements(): import('node:sqlite').StatementSync[] {
-  if (!_single) _single = SINGLE_TABLES.map((t) => db.prepare(`DELETE FROM ${t} WHERE sub = ?`));
-  return _single;
+// 🚨 AND LAZY IS ONLY HALF OF IT: THE TABLE HAS TO EXIST. Preparing on first use stops a bad NAME
+// from taking the process down at import, which is what the note above is about. It does nothing
+// for a table that is legitimately ABSENT — and that case is real, not hypothetical: db.ts runs 45
+// unconditional CREATE TABLEs today, so a build that stops creating the economy ones (the minimal
+// reaches ~30 tables it can never read or write) would make every statement below throw the first
+// time somebody deleted an account. The GDPR path is the worst place to learn that.
+//
+// So a statement is prepared once, on demand, and resolves to null when its table is not in this
+// schema. Callers treat null as "nothing to delete here", which is exactly true.
+const _stmts = new Map<string, import('node:sqlite').StatementSync | null>();
+function stmt(sql: string): import('node:sqlite').StatementSync | null {
+  if (!_stmts.has(sql)) {
+    // The table is read from the SQL rather than passed alongside it: two sources for one fact is
+    // how the hand-maintained list above drifted in the first place.
+    const t = /(?:DELETE\s+FROM|UPDATE|\bFROM)\s+([A-Za-z_][A-Za-z0-9_]*)/i.exec(sql)?.[1];
+    const present = !t || db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t) !== undefined;
+    if (!present) console.warn(`[userData] skipping erasure on absent table: ${t}`);
+    _stmts.set(sql, present ? db.prepare(sql) : null);
+  }
+  return _stmts.get(sql) ?? null;
+}
+/** Run an erasure statement and count the rows it removed; 0 when the table is not in this build. */
+function ran(sql: string, ...args: unknown[]): number {
+  const s = stmt(sql);
+  return s ? (Number((s.run(...args as never[])).changes) || 0) : 0;
 }
 
 // 🚨 THE VENDOR STALL ROW IS NOT SYMMETRIC, and copying card_listings would have been wrong.
@@ -72,21 +94,21 @@ function singleStatements(): import('node:sqlite').StatementSync[] {
 //
 // (card_listings above does delete both sides. Stated here so the difference reads as a
 // decision rather than as one of the two having been forgotten.)
-const qDelMyListings = db.prepare("DELETE FROM item_listings WHERE seller_sub = ?");
-const qAnonBuyer = db.prepare('UPDATE item_listings SET buyer_sub = NULL, buyer_nick = NULL WHERE buyer_sub = ?');
-const qReporter = db.prepare('DELETE FROM comment_reports WHERE reporter_sub = ?');
+const SQL_DEL_MY_LISTINGS = "DELETE FROM item_listings WHERE seller_sub = ?";
+const SQL_ANON_BUYER = 'UPDATE item_listings SET buyer_sub = NULL, buyer_nick = NULL WHERE buyer_sub = ?';
+const SQL_REPORTER = 'DELETE FROM comment_reports WHERE reporter_sub = ?';
 // season_winners stores only (season, rank, nickname, points) — no sub column — so
 // it must be wiped by the user's nickname, captured BEFORE the nicknames row goes
 // (audit 2026-06-23: a GDPR erasure was leaving the pseudonymous snapshot behind).
-const qNickForErase = db.prepare('SELECT nickname FROM nicknames WHERE sub = ?');
-const qDelSeasonWinners = db.prepare('DELETE FROM season_winners WHERE nickname = ?');
+const SQL_NICK_FOR_ERASE = 'SELECT nickname FROM nicknames WHERE sub = ?';
+const SQL_DEL_SEASON_WINNERS = 'DELETE FROM season_winners WHERE nickname = ?';
 // Tables where the user can be on either side — wiped for both roles.
 const PAIRS = [
   'DELETE FROM profile_comments WHERE author_sub = ? OR profile_sub = ?', // their comments + their wall
   'DELETE FROM comment_blocks   WHERE owner_sub = ? OR blocked_sub = ?',
   'DELETE FROM follows          WHERE follower_sub = ? OR target_sub = ?',
   'DELETE FROM card_listings    WHERE seller_sub = ? OR buyer_sub = ?',
-].map((sql) => db.prepare(sql));
+];
 
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -102,13 +124,13 @@ export function eraseUserData(sub: string): number {
   // Measured in the container: 0 ms to fail deferred, 4003 ms of grace with IMMEDIATE. A GDPR
   // erasure is the last thing that should lose a coin-flip against the other process.
   tx(() => {
-    const wnick = (qNickForErase.get(sub) as { nickname?: string } | undefined)?.nickname; // capture before SINGLE wipes nicknames
-    for (const st of singleStatements()) removed += Number(st.run(sub).changes) || 0;
-    removed += Number(qReporter.run(sub).changes) || 0;
-    removed += Number(qDelMyListings.run(sub).changes) || 0;
-    removed += Number(qAnonBuyer.run(sub).changes) || 0;
-    for (const st of PAIRS) removed += Number(st.run(sub, sub).changes) || 0;
-    if (wnick) removed += Number(qDelSeasonWinners.run(wnick).changes) || 0;
+    const wnick = (stmt(SQL_NICK_FOR_ERASE)?.get(sub) as { nickname?: string } | undefined)?.nickname; // capture before SINGLE wipes nicknames
+    for (const t of SINGLE_TABLES) removed += ran(`DELETE FROM ${t} WHERE sub = ?`, sub);
+    removed += ran(SQL_REPORTER, sub);
+    removed += ran(SQL_DEL_MY_LISTINGS, sub);
+    removed += ran(SQL_ANON_BUYER, sub);
+    for (const sql of PAIRS) removed += ran(sql, sub, sub);
+    if (wnick) removed += ran(SQL_DEL_SEASON_WINNERS, wnick);
   });
   // Dedicated cards.db (separate connection), outside the txn above because two databases cannot
   // share one — that part is unavoidable. What is NOT is what used to happen next.

@@ -295,6 +295,14 @@ function _recoverFromCorruptAsset(detail) {
   try {
     if (typeof localStorage === 'undefined') return;
     const MAX_LINES = 200;
+    // 🚨 THE TAIL IS A WINDOW, AND IT HAS TO SAY SO. Measured 2026-09-06 on a real boot under
+    // production's console configuration: the saved `tail` spanned T+14074ms..T+15874ms — ONE POINT
+    // EIGHT SECONDS of an eighteen-second boot. The client logs fast enough that a 200-line ring
+    // wraps almost immediately, so `[cuo-init]`, `runtime ready` and the snapshot-cache line were
+    // all long gone. That is fine for a hang (the end is the interesting part) and a trap for a
+    // reader, who sees a report starting at T+14s and concludes nothing happened before it. This
+    // project's own rule: a silence only means something once you know it could have spoken.
+    let dropped = 0;
     const buf = [];
     const t0 = performance.now();
     const push = (kind, args) => {
@@ -307,7 +315,7 @@ function _recoverFromCorruptAsset(detail) {
           if (s.length > 400) break;
         }
         buf.push(`T+${(performance.now() - t0).toFixed(0)} [${kind}] ${s.slice(0, 400)}`);
-        if (buf.length > MAX_LINES) buf.shift();
+        if (buf.length > MAX_LINES) { buf.shift(); dropped++; }
         // v0.8.98 audit fix: every non-error console line is a liveness
         // signal for the boot watchdog — the C# engine boot (runtime-ready →
         // LoginGump) logs continuously but emits no JS-side progress events,
@@ -343,10 +351,16 @@ function _recoverFromCorruptAsset(detail) {
           mem: memStr(),
           url: location.href.split('#')[0].slice(0, 200),
           tail: buf.slice(-120),
+          // How many console lines fell out of the ring before this tail begins. Without it the
+          // truncation is silent and the tail reads like the whole session.
+          droppedBefore: dropped + Math.max(0, buf.length - 120),
         }));
       } catch { /* storage full/blocked — nothing else to do */ }
     };
     window.__uoCrashSave = save;
+    // Exposed so a LATER console silencer can keep the black box fed instead of replacing it.
+    // See the disableDev branch: silencing must mean "do not PRINT", never "do not RECORD".
+    window.__uoLogSink = push;
 
     // OUT-OF-MEMORY gets NAMED, instead of looking like a stall (operator goal
     // "que funcione en PCs antiguos"). This client takes a FIXED wasm heap with
@@ -434,7 +448,16 @@ function _recoverFromCorruptAsset(detail) {
       // pagehide) used to lose the console tail — the one place the [opfs-snap] SLOW evidence lives.
       // Persist the last ~40 lines with every 2 s beat; the tab may die at any instant and the freshest
       // beat still holds the final seconds. Read back on the NEXT boot (any tab, same origin).
-      try { localStorage.setItem('uo-alive-tail', JSON.stringify(buf.slice(-40))); } catch { /* storage full — beat stays */ }
+      // 🚨 THE NARROWEST TAIL IS THE ONE THAT MATTERS MOST. This 40-line slice is what the
+      // FROZEN case prints — the LoginGump hang — and 40 lines of a booting client is well
+      // under a second. Keeping the count of what fell out turns a silent window into a
+      // stated one. Stored as an object; a bare array is a value written by an older build.
+      try {
+        localStorage.setItem('uo-alive-tail', JSON.stringify({
+          lines: buf.slice(-40),
+          droppedBefore: dropped + Math.max(0, buf.length - 40),
+        }));
+      } catch { /* storage full — beat stays */ }
     }, 2000);
     window.addEventListener('pagehide', () => {
       try { localStorage.setItem('uo-clean-exit', String(Date.now())); } catch {}
@@ -525,10 +548,28 @@ function _recoverFromCorruptAsset(detail) {
           : `[crash-report] previous session ended without a clean exit, but its engine never started — a page that does not run the game, or a tab closed during load. Not a freeze. lastAlive=${new Date(alive.t).toISOString()}${engGap} ${alive.m}`);
         // Console tail persisted by the 2 s heartbeat — the frozen tab itself was unreachable (operator
         // 2026-07-10), so this is the ONLY record of what the session printed in its final seconds.
+        // 🚨 ONE reader for `uo-alive-tail`. The legacy-shape adoption was written TWICE here
+        // (three times counting the count), and this store is read on a path nobody re-tests by
+        // hand. A rule written twice is a rule that diverges: the next shape change gets applied
+        // to one copy and the other silently reads the value as empty.
+        const _aliveTail = (() => {
+          try {
+            const v = JSON.parse(localStorage.getItem('uo-alive-tail') || 'null');
+            // Adopt by FORM, not by version: an older build stored a bare array, which carries no count.
+            return Array.isArray(v)
+              ? { lines: v, droppedBefore: 0 }
+              : { lines: (v && v.lines) || [], droppedBefore: (v && Number(v.droppedBefore)) || 0 };
+          } catch { return { lines: [], droppedBefore: 0 }; }
+        })();
         try {
-          const dtail = JSON.parse(localStorage.getItem('uo-alive-tail') || 'null');
+          const dtail = _aliveTail.lines;
+          const ddrop = _aliveTail.droppedBefore;
           if (dtail && dtail.length) {
-            console.error(`[crash-report] console tail of the ${ranEngine ? 'frozen' : 'previous'} session (last heartbeat):\n` + dtail.join('\n'));
+            const NLD = String.fromCharCode(10);
+            console.error(`[crash-report] console tail of the ${ranEngine ? 'frozen' : 'previous'} session`
+              + ` (last heartbeat, ${dtail.length} line(s)`
+              + (ddrop ? `; ${ddrop} earlier line(s) fell out of the ring — a WINDOW, not the whole session` : '')
+              + '):' + NLD + dtail.join(NLD));
             // The REASON travels too: anything reading this programmatically was told "dirty-end"
             // for both cases and could not tell them apart either.
             window.__uoLastCrash = window.__uoLastCrash
@@ -545,7 +586,15 @@ function _recoverFromCorruptAsset(detail) {
         console.error(r.recovered
           ? `[crash-report] the previous session hit an error and then exited normally — NOT a crash. @${r.when} reason=${r.reason} ${r.mem} :: ${r.extra}`
           : `[crash-report] PREVIOUS CRASH @${r.when} reason=${r.reason} ${r.mem} :: ${r.extra}`);
-        console.error(`[crash-report] console tail of the ${r.recovered ? 'previous' : 'crashed'} session:\n` + (r.tail || []).join('\n'));
+        // Say what is MISSING, not just what is here: the tail is the last N lines of a ring that
+        // wraps in about two seconds of a real boot, so printing it bare invites the reader to
+        // conclude that nothing happened before its first line.
+        const _dropped = Number(r.droppedBefore || 0);
+        const NLC = String.fromCharCode(10);   // built, never escaped through layers
+        console.error(`[crash-report] console tail of the ${r.recovered ? 'previous' : 'crashed'} session`
+          + ` (last ${(r.tail || []).length} line(s)`
+          + (_dropped ? `; ${_dropped} earlier line(s) fell out of the ring — this is a WINDOW, not the whole session` : '')
+          + '):' + NLC + (r.tail || []).join(NLC));
         window.__uoLastCrash = r;       // programmatic access for bots
         localStorage.removeItem('uo-crash-report');
       }
@@ -833,13 +882,20 @@ function wireGameMode(stageEl, canvas) {
   const qs = new URLSearchParams(location.search);
   const autoDisabled = qs.get('autofullscreen') === '0';
 
+  // 🚨 THIS BUTTON WAS SHOWING TWO TOOLTIPS AND ONE OF THEM WAS STALE. index.html already gives it
+  // a `data-tip`, so the site's own label was drawn on hover AND, a second later, the browser's
+  // native one from this `title` — and because only the title was refreshed, the site's label still
+  // read "Game Mode" while you were already in it. Writing the same attribute the markup declares
+  // is what makes the state toggle visible. The button is icon-only (an SVG), so the accessible
+  // name has to be set too: `title` was providing it, and data-tip does not.
+  const setLabel = (text) => { btn.setAttribute('data-tip', text); btn.setAttribute('aria-label', text); };
   const refreshLabel = () => {
     if (document.fullscreenElement) {
       btn.setAttribute('aria-pressed', 'true');
-      btn.title = 'Exit Game Mode';
+      setLabel('Exit Game Mode');
     } else {
       btn.setAttribute('aria-pressed', 'false');
-      btn.title = 'Game Mode — fullscreen + capture F1-F24 / numpad / Ctrl+combos';
+      setLabel('Game Mode — fullscreen + capture F1-F24 / numpad / Ctrl+combos');
     }
   };
 
@@ -1308,9 +1364,23 @@ async function applyServerConfig() {
       if (cfg.disableDev === true) {
         devMode = false;
         try {
-          const noop = () => {};
+          // 🚨 A BARE NOOP HERE ALSO BLINDS THREE THINGS THAT ARE NOT THE CONSOLE. The ring above
+          // wraps console.log/error/warn/info at module eval and feeds `uo-crash-report`'s tail,
+          // `_bootProgress()` (the boot watchdog's liveness signal across the long C# engine boot,
+          // which logs continuously and emits no JS-side events) and the corrupt-asset self-heal
+          // (it recognises a ZLib CRC failure in that same line and re-pulls the one bad gamefile
+          // instead of letting it be a fatal boot crash). Assigning a plain noop OVER that wrapper
+          // stops all three the moment /api/config resolves.
+          // Measured on uonexus.com 2026-09-06: the saved report's tail held ONE line and a line
+          // emitted after boot never reached it, while the same probe with disableDev:false
+          // captured it. It survived because the report still LOOKED full — the event ring
+          // (__uoEv) is separate and kept working.
+          // Silencing must mean "do not PRINT", never "do not RECORD": the sink keeps every one of
+          // those alive and nothing reaches the user's console, which is what the flag is for.
+          const sink = (typeof window !== 'undefined' && window.__uoLogSink) || null;
+          const quiet = (k) => (...args) => { if (sink) { try { sink(k, args); } catch {} } };
           for (const k of ['log', 'error', 'warn', 'info', 'debug', 'trace']) {
-            if (typeof console !== 'undefined' && typeof console[k] === 'function') console[k] = noop;
+            if (typeof console !== 'undefined' && typeof console[k] === 'function') console[k] = quiet(k);
           }
         } catch {}
       }
@@ -4892,6 +4962,9 @@ function installInputBridge(canvas, Module) {
       const cx = (r.width / 2) * sx, cy = (r.height / 2) * sy;
       for (const b of [1, 2, 3]) { wasm_push_mouse_button(0, b, cx, cy); }
     } catch (e) { /* canvas gone mid-teardown */ }
+    // Announced, because the blur/visibility handlers that call this stop every other listener: a layer
+    // that holds a synthetic button (the phone's press-to-walk) must drop its own state with the engine's.
+    try { window.dispatchEvent(new Event('cuo:mouse-released')); } catch (e) { /* no window */ }
   };
   // The blur/focus/visibility hooks live INSIDE the capture listeners above
   // (wasm_push_win_focus block) — a listener registered here would never run:

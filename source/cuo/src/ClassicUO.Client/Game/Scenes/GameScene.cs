@@ -693,6 +693,44 @@ namespace ClassicUO.Game.Scenes
         private float _cachedFillZoom = -1f;
         private int _cachedFillMinTileX, _cachedFillMinTileY;
         private int _cachedFillMaxTileX, _cachedFillMaxTileY;
+        // 2026-09-15 (ported from the mini): the PIXEL box the last fill clipped against. The tile box above
+        // can stay the same while the pixel box moves, so the idle skip keys on this too.
+        private Vector2 _cachedFillMinPixel, _cachedFillMaxPixel;
+        private Point _visibleWorldMin, _visibleWorldMax;
+
+        /// <summary>
+        /// Is everything a player can SEE right now inside the box this chunk's replay cache was clipped
+        /// under? Only then is replaying it complete.
+        /// </summary>
+        /// <remarks>
+        /// Found on the mini (operator 2026-09-14, a folding phone: parts of the board undrawn "hasta que
+        /// vuelves a cambiar el aspect ratio") and ported because this client has the same gate. The cache
+        /// holds only what passed the pixel clip of the fill that built it, and the replay gate asked only
+        /// whether the PLAYER had moved. Here the view changes without the player moving whenever the
+        /// browser window or the game window is resized, or the zoom changes: stable chunks then replayed a
+        /// clip that no longer covered the screen.
+        ///
+        /// CONTAINMENT, NOT "NOTHING CHANGED": the draw offset moves every frame while the hero walks between
+        /// tiles, so refusing replay on any change would cost a full chunk walk on every walking frame. An
+        /// object was cached iff its screen position lay in [clipMin + offsetThen, clipMax + offsetThen], and
+        /// matters now iff it lies in [visMin + offsetNow, visMax + offsetNow]; replay is allowed while the
+        /// second range sits inside the first with KEEP px of the old off-screen margin to spare.
+        /// KEEP is a trade: that margin is sprite overhang a moving view can show unfilled at its leading
+        /// edge. It must stay under the margin itself, (int)(44 / zoom) screen px, or every replay is refused.
+        /// </remarks>
+        private bool ReplayClipCovers(Chunk c)
+        {
+            const float KEEP = 32f; // world px of the old off-screen margin a replay must still have
+            if (c.CachedClipZoom != Camera.Zoom) return false;
+            // The circle of transparency and the foliage fade were computed around the hero's screen position
+            // at cache time; a replay would keep them there while the hero's walk offset slides the view.
+            if (ProfileManager.CurrentProfile.UseCircleOfTransparency
+                && (_offset.X != c.CachedClipOffX || _offset.Y != c.CachedClipOffY)) return false;
+            return _visibleWorldMin.X + _offset.X - KEEP >= c.CachedClipMinX + c.CachedClipOffX
+                && _visibleWorldMax.X + _offset.X + KEEP <= c.CachedClipMaxX + c.CachedClipOffX
+                && _visibleWorldMin.Y + _offset.Y - KEEP >= c.CachedClipMinY + c.CachedClipOffY
+                && _visibleWorldMax.Y + _offset.Y + KEEP <= c.CachedClipMaxY + c.CachedClipOffY;
+        }
         private long _fillCacheLastLog;
 
 #if BROWSER_WASM
@@ -1077,7 +1115,9 @@ namespace ClassicUO.Game.Scenes
                 && _cachedFillMinTileX == minX
                 && _cachedFillMinTileY == minY
                 && _cachedFillMaxTileX == maxX
-                && _cachedFillMaxTileY == maxY;
+                && _cachedFillMaxTileY == maxY
+                && _cachedFillMinPixel == _minPixel
+                && _cachedFillMaxPixel == _maxPixel;
             if (canReuse)
             {
                 _lightDiagCacheHits++;
@@ -1204,6 +1244,14 @@ namespace ClassicUO.Game.Scenes
                 && (_world.Player.X != _cachedFillX
                     || _world.Player.Y != _cachedFillY
                     || _world.Player.Z != _cachedFillZ);
+
+            // 2026-09-15: the VISIBLE area this fill must cover, in the same world units as _minPixel /
+            // _maxPixel (which add an off-screen margin to it). ReplayClipCovers compares it with the box
+            // each chunk's cache was clipped under.
+            _visibleWorldMin = Camera.ScreenToWorld(Point.Zero);
+            _visibleWorldMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
+            _cachedFillMinPixel = _minPixel;
+            _cachedFillMaxPixel = _maxPixel;
 
             _cachedFillX = _world.Player.X;
             _cachedFillY = _world.Player.Y;
@@ -1533,12 +1581,19 @@ namespace ClassicUO.Game.Scenes
                         && !_alphaChanged
                         && chunk.CachedContribsValid
                         && !teleportBurstActive
-                        && !playerMovedSinceLastFill;
+                        && !playerMovedSinceLastFill
+                        && ReplayClipCovers(chunk);
                     if (cacheReplayAllowed)
                     {
 #if BROWSER_WASM
                         var __replaySw = System.Diagnostics.Stopwatch.StartNew();
                         n_replayPathCalls++;
+                        // A replay refreshes the CACHED objects only, so it must not claim the chunk is
+                        // positioned: Chunk.RspOffX keeps the offset of the last full walk, and the next full
+                        // walk refreshes every object when it differs. The cached objects are refreshed on the
+                        // same rule, not only under UpdateDrawPosition - that flag is cleared every fill, so a
+                        // chunk skipped by the fill that moved the offset would replay them at the old one.
+                        bool replayRefresh = UpdateDrawPosition || chunk.RspOffX != _offset.X || chunk.RspOffY != _offset.Y;
 #endif
                         _visibleChunks.Add(chunk);
                         _curVisibleChunkSet.Add(chunk);
@@ -1574,7 +1629,7 @@ namespace ClassicUO.Game.Scenes
                             if (mObj.IsDestroyed) continue;
                             if ((mObj.X >> 3) != chunkBaseX || (mObj.Y >> 3) != chunkBaseY)
                                 continue;
-                            if (UpdateDrawPosition || mObj.IsPositionChanged)
+                            if (replayRefresh || mObj.IsPositionChanged)
                             {
                                 mObj.UpdateRealScreenPosition(_offset.X, _offset.Y);
                             }
@@ -1590,7 +1645,7 @@ namespace ClassicUO.Game.Scenes
                             if (sObj.IsDestroyed) continue;
                             if ((sObj.X >> 3) != chunkBaseX || (sObj.Y >> 3) != chunkBaseY)
                                 continue;
-                            if (UpdateDrawPosition || sObj.IsPositionChanged)
+                            if (replayRefresh || sObj.IsPositionChanged)
                             {
                                 sObj.UpdateRealScreenPosition(_offset.X, _offset.Y);
                             }
@@ -1910,6 +1965,18 @@ namespace ClassicUO.Game.Scenes
                     // Mark valid so the next stable+clean cache-MISS skips
                     // the iteration in favour of cheap replay.
                     chunk.CachedContribsValid = true;
+                    // Every chain of the chunk was walked, and AddTileToRenderList refreshed each one whole
+                    // whenever the offset had moved - so every object now sits at this offset.
+                    chunk.RspOffX = _offset.X;
+                    chunk.RspOffY = _offset.Y;
+                    // ...and remember the view it was clipped under (see ReplayClipCovers).
+                    chunk.CachedClipOffX = _offset.X;
+                    chunk.CachedClipOffY = _offset.Y;
+                    chunk.CachedClipMinX = _minPixel.X;
+                    chunk.CachedClipMinY = _minPixel.Y;
+                    chunk.CachedClipMaxX = _maxPixel.X;
+                    chunk.CachedClipMaxY = _maxPixel.Y;
+                    chunk.CachedClipZoom = Camera.Zoom;
 
                     // v0.4.51: time-budget check at chunk boundary using
                     // Stopwatch (TickCount64 was unreliable inside a single

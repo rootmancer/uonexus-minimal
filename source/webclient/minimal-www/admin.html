@@ -311,7 +311,7 @@
       keeps somebody out. A Discord id is a 15-20 digit number; an IP entry takes CIDR notation
       (<code>203.0.113.4/32</code> for one address). A reason is required. Leave days empty for
       permanent; anything longer than ten years is treated as permanent anyway.</p>
-    <p class="note">⚠️ IP bans catch whoever holds that address later, and on a home connection that
+    <p class="note">⚠ IP bans catch whoever holds that address later, and on a home connection that
       can be a different person within a day. Prefer the Discord id where you have one.</p>
   </section>
 
@@ -360,7 +360,7 @@
       as the player's. <strong>Erase</strong> removes an account's settings, its identity row and its
       synced profile blobs; <strong>Drop profiles</strong> removes only the blobs, which is the
       narrower fix when a synced profile is corrupt but the account is fine.</p>
-    <p class="note">⚠️ Guests are not purged on a timer, deliberately. A guest id lives in that
+    <p class="note">⚠ Guests are not purged on a timer, deliberately. A guest id lives in that
       browser's local storage rather than in the cookie, so somebody can return months later still
       holding the same account — deleting by age would destroy data its owner could still reach, and
       the whole lot is tens of kilobytes.</p>

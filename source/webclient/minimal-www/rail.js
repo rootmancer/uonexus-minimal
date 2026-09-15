@@ -265,7 +265,9 @@
     // No FAQ link here: the FAQ lives on the site, and the rail is for things you
     // cannot reach from a page you are not currently looking at.
 
-    // Bug report — official renders a TEXT link "🐛 Bug Report" in gold, not an icon.
+    // Bug report — a TEXT link in gold, not an icon.
+    // 🚨 NO EMOJI. This carried U+1F41B to mirror the official client; the standing rule wins, and it
+    // matters more here than upstream — this build is what a self-hoster ships to their own players.
     //
     // Appended only once an invite has been resolved, rather than created hidden and revealed: a
     // control shown by clearing style.display does not appear at all when the stylesheet says none,
@@ -286,7 +288,7 @@
           LINK_BUG = invite;
           var bug = el("button", {
             "class": "uorail-textlink uorail-textlink-gold", "data-pointer": "auto", "aria-label": "Report a bug", type: "button",
-          }, "🐛 Bug Report");
+          }, "Bug Report");
           bug.addEventListener("click", function () { openExternal(LINK_BUG); });
           bar.appendChild(bug);
         })
@@ -725,7 +727,7 @@
     if (window.UORailLegion && typeof window.UORailLegion.run === "function") return go();
     if (_legionLoading) { out("LegionScript engine still loading…", "muted"); return; }
     _legionLoading = true;
-    out("⏳ Loading the LegionScript engine (CPython)…", "muted");
+    out("Loading the LegionScript engine (CPython)…", "muted");
     var s = document.createElement("script");
     s.src = RAIL_BASE + "legion-engine.js" + LEGION_Q; s.async = true;
     s.onload = function () { _legionLoading = false; if (window.UORailLegion) go(); else out("LegionScript engine failed to initialise.", "err"); };
@@ -1629,7 +1631,11 @@
         selectedName = m.name;
         var capturing = false;
         var head =
-          '<div class="uorail-hk-name"><input class="uorail-input" id="uorail-macro-name" value="' + esc(m.name || "") + '" data-pointer="auto"' + (br && br.renameMacro ? ' data-tip="Type here to rename"' : ' readonly') + '>' +
+          // 🚨 THE TIP GOES ON THE WRAPPER, NOT THE INPUT — an <input> is a replaced element and
+          // generates no `::after`, so the tooltip rendered nothing at all. Same fix as
+          // shared-www/rail.js; the minimal keeps its own hand-written copy of this file, which is
+          // exactly why a defect here has to be fixed in BOTH or it survives in one.
+          '<div class="uorail-hk-name"' + (br && br.renameMacro ? ' data-tip="Type here to rename"' : '') + '><input class="uorail-input" id="uorail-macro-name" value="' + esc(m.name || "") + '" data-pointer="auto"' + (br && br.renameMacro ? '' : ' readonly') + '>' +
           '<button class="uorail-icon-btn uorail-icon-danger" id="uorail-del-macro" data-pointer="auto" data-tip="Delete macro">−</button></div>' +
           '<div class="uorail-hk-bind"><button class="uorail-key-capture" id="uorail-bind-set" data-pointer="auto" data-tip="Click, then press a key">' + bindChips(m.key) + "</button>" +
           '<button class="uorail-key-x" id="uorail-bind-clear" data-pointer="auto" data-tip="Clear key">×</button></div>';
@@ -2748,7 +2754,11 @@
         } else {
           chans.forEach(function (c) {
             var row = el("div", { "class": "uorail-al-item" });
-            row.appendChild(el("span", { "class": "uorail-al-name" }, esc(c.name) + (c.pw ? " 🔒" : "")));
+            // "(locked)" as WORDS, not a padlock: the no-emoji rule wants a glyph in the site's own
+            // font, and Unicode has no text-presentation padlock that Chrome/Edge render reliably on
+            // every platform — U+1F512 is emoji-only. A tofu box would be worse than the emoji it
+            // replaced, so the marker is text.
+            row.appendChild(el("span", { "class": "uorail-al-name" }, esc(c.name) + (c.pw ? " (locked)" : "")));
             var join = el("button", { "class": "uorail-icon-btn uorail-icon-sm", "data-pointer": "auto", "data-tip": "Join" }, "Join");
             join.addEventListener("click", function () {
               var doJoin = function (pw) {
@@ -2873,7 +2883,10 @@
               var sid = (s && s.id != null) ? (s.id >>> 0) : 0;
               if (s && s.name) nameById[sid] = String(s.name);   // remember for the filtered column
               if (mutedIds[sid]) return;   // already muted → it's in the other column
-              recentList.appendChild(rowFor(labelFor(sid), "🔇", "Mute this sound", function () {
+              // ⊘ (U+2298) rather than the speaker-with-cancel emoji: it is a Mathematical Operator,
+              // so Unicode gives it no emoji presentation at all and it renders in the rail's own
+              // font at the rail's own size.
+              recentList.appendChild(rowFor(labelFor(sid), "⊘", "Mute this sound", function () {
                 Promise.resolve(br.addSoundFilter(sid)).then(function () { refreshFiltered(); refreshRecent(); });
               }));
             });
@@ -3521,7 +3534,9 @@
       '<div class="uorail-form">' +
         '<div class="uorail-field"><div class="uorail-field-lbl">Group password (share it with your group)</div>' +
           '<div class="uorail-input-row" style="display:flex;gap:6px"><input type="text" class="uorail-input uorail-textb" data-uoam="pw" value="' + esc(cfg.password || "") + '" placeholder="e.g. dragons-2026" data-pointer="auto" style="flex:1 1 auto">' +
-          '<button class="uorail-icon-btn" data-act="uoam-newpw" data-tip="Generate a random password" data-pointer="auto">🎲</button></div></div>' +
+          // ⚄ (U+2684) is a die FACE, which Unicode never made an emoji — only U+1F3B2 is one.
+          // Same picture, drawn by the page's font instead of the platform's emoji artwork.
+          '<button class="uorail-icon-btn" data-act="uoam-newpw" data-tip="Generate a random password" data-pointer="auto">⚄</button></div></div>' +
         '<div class="uorail-field"><div class="uorail-field-lbl">Your marker color (hue)</div>' +
           '<input type="range" class="uorail-range" data-uoam="color" min="1" max="3000" value="' + (cfg.color || 88) + '" data-pointer="auto"></div>' +
         '<div class="uorail-field"><div class="uorail-field-lbl">Update interval <span data-uoam="ivlbl"></span></div>' +
@@ -3587,7 +3602,7 @@
   // actual, no en una ventana flotante") — the EXACT launch-demo.html mechanics, extracted as
   // window.UOMinigameBar so the portal Minigames tab and this rail panel embed the same FRAMELESS,
   // TRANSPARENT bottom bar: boot HIDDEN behind a loader pill until the mini posts `mini:inworld`
-  // (no LoginGump flash), host-side ✕ + 🔊/volume controls in the rail style, close DESTROYS the
+  // (no LoginGump flash), host-side ✕ + ♪/volume controls in the rail style, close DESTROYS the
   // iframe (frees the WASM heap) and sweeps the mini's parent-doc panels (.mghud-wrap et al).
   // Boot deadline = STALL watchdog, not a stopwatch (operator 2026-07-26: TUO +
   // Tower Defense "llega al 99% y pone couldn't connect, retry"). It used to be a

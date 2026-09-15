@@ -962,11 +962,25 @@ namespace ClassicUO.Game.Scenes
             // v0.4.51: every contribution (slow-path PushToRenderQueue +
             // mesh fast-path) records into this chunk's replay cache.
             _currentChunkForRecord = chunk;
+            // Positions can be stale behind UpdateDrawPosition's back (see Chunk.RspOffX).
+            bool refreshDrawPosition = UpdateDrawPosition || chunk.RspOffX != _offset.X || chunk.RspOffY != _offset.Y;
+#else
+            bool refreshDrawPosition = UpdateDrawPosition;
 #endif
+            // THE WHOLE CHAIN, BEFORE THE LOOP: the loop below leaves at the first object outside the clip and
+            // returns early in several places, so refreshing object by object left the rest of the cell at the
+            // old offset, and nothing refreshed it later.
+            if (refreshDrawPosition)
+            {
+                for (GameObject r = obj; r != null; r = r.TNext)
+                {
+                    r.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                }
+            }
 
             for (; obj != null; obj = obj.TNext)
             {
-                if (UpdateDrawPosition || obj.IsPositionChanged)
+                if (obj.IsPositionChanged)
                 {
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);
                 }
