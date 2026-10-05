@@ -810,6 +810,19 @@ const REQUIRED_FILES = [
   ['multimap.rle',  'multimap.rle'],
   ['skillgrp.mul',  'skillgrp.mul'],
   ['animinfo.mul',  'animinfo.mul'],
+
+  // Current UO installer ships art/gumps/maps/sound as *LegacyMUL.uop instead of the
+  // classic .mul files. Absent on older installs; a 404 here is skipped like any other
+  // cross-era entry.
+  ['artlegacymul.uop', 'artlegacymul.uop'],
+  ['gumpartlegacymul.uop', 'gumpartlegacymul.uop'],
+  ['map0legacymul.uop', 'map0legacymul.uop'],
+  ['map1legacymul.uop', 'map1legacymul.uop'],
+  ['map2legacymul.uop', 'map2legacymul.uop'],
+  ['map3legacymul.uop', 'map3legacymul.uop'],
+  ['map4legacymul.uop', 'map4legacymul.uop'],
+  ['map5legacymul.uop', 'map5legacymul.uop'],
+  ['soundlegacymul.uop', 'soundlegacymul.uop'],
 ];
 
 // --- Loader UI -----------------------------------------------------
