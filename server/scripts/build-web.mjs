@@ -741,7 +741,7 @@ for (const bundle of (WEB_TREE_ONLY ? [] : BUNDLES)) {
     if (isWin) {
       run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'strip-dev-blocks.ps1'), '-ClientDir', clientDir]);
     } else {
-      run('bash', [path.join(__dirname, 'strip-dev-blocks.sh'), clientDir]);
+      run('bash', [path.join(__dirname, 'strip-dev-blocks.sh'), '--client-dir', clientDir]);
     }
     // strip-dev-blocks renamed main.<hash>.js + wrote no .br; refresh the twin.
     const newMain = fs.readdirSync(clientDir).find((f) => /^main\.[a-z0-9]+\.js$/.test(f));
