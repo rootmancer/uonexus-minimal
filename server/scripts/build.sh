@@ -262,6 +262,7 @@ echo "[build] Copying output to client/..."
 mirror_into() {  # mirror_into SRC DST  ==  rsync -a --delete, keeping gamefiles/ *.br *.gz in DST
   local src="$1" dst="$2"
   if command -v rsync &>/dev/null; then
+    mkdir -p "$dst"  # rsync creates only the last path component; a fresh clone has no client/
     rsync -a --delete --exclude='gamefiles/' --exclude='*.br' --exclude='*.gz' "$src/" "$dst/"
     return
   fi
@@ -347,7 +348,7 @@ rm -f "$CLIENT/legion-engine.js.br" "$CLIENT/legion-worker.js.br"
 # de TazUO en rojo).
 echo "[build] Restoring raw pyodide/*.js (plain-named, never fingerprinted)..."
 mkdir -p "$CLIENT/pyodide"
-cp -f "$WEBCLIENT/shared-www/pyodide/." "$CLIENT/pyodide/" -r
+cp -rf "$WEBCLIENT/shared-www/pyodide/." "$CLIENT/pyodide/"
 if [ ! -f "$CLIENT/pyodide/pyodide.js" ]; then
   echo "[build] ERROR: raw pyodide/pyodide.js restore failed"
   exit 1
